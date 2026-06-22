@@ -120,29 +120,25 @@ class ImportResult:
 # IMPORTER
 # ---------------------------------------------------------------------------
 
-class TerraformImporter:
-    
-# Added: Terraform resource name validation
 
 import re
 
-_VALID_RESOURCE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-
-def validate_resource_name(name: str) -> tuple:
-    """Validate a Terraform resource name.
-    Returns (is_valid, error_message).
-    Resource names must match: [a-zA-Z_][a-zA-Z0-9_]*
-    Hyphens can corrupt Terraform state.
+def validate_resource_name(name):
+    """Validate a Terraform resource name. Returns (is_valid, error_message).
+    Resource names must match: [a-zA-Z_][a-zA-Z0-9_]*.
+    Hyphens are not allowed in Terraform resource names.
     """
     if not name:
         return False, "Resource name cannot be empty"
     if "-" in name:
         return False, f"Resource name '{name}' contains hyphens, which can corrupt Terraform state"
-    if not _VALID_RESOURCE_RE.match(name):
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name):
         return False, f"Resource name '{name}' is not a valid Terraform identifier"
     return True, ""
 
-def __init__(self, state_dir: str = ".", terraform_binary: str = "terraform"):
+
+class TerraformImporter:
+    def __init__(self, state_dir: str = ".", terraform_binary: str = "terraform"):
         self.state_dir = Path(state_dir)
         self.terraform_binary = terraform_binary
         self.results: List[Dict[str, Any]] = []

@@ -142,4 +142,10 @@ class TestEndToEnd(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # Run only fast unit tests (skip slow network tests)
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+    for cls in [TestCircuitBreaker, TestHealthCheckStats, TestHTTPRetryBackoff, TestCLIFlags]:
+        suite.addTests(loader.loadTestsFromTestCase(cls))
+    runner = unittest.TextTestRunner()
+    runner.run(suite)

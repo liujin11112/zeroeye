@@ -130,6 +130,7 @@ class JSONLogParser(LogParser):
                 'format': 'json',
             }
         except json.JSONDecodeError:
+            record_parse_error(filename, lineno, str(e), "json")
             return None
 
 
@@ -404,10 +405,21 @@ th {{ background: #1e293b; color: #94a3b8; }}
         logger.info(f"HTML report generated at {output_path}")
 
 
+
+parse_errors = []
+
+
+def record_parse_error(filepath, line_num, error_msg, parser_type):
+    parse_errors.append({
+        "file": filepath, "line": line_num,
+        "error": error_msg, "parser": parser_type
+    })
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Log aggregator and analysis tool")
     parser.add_argument("--input", "-i", help="Input log file or glob pattern")
     parser.add_argument("--dir", help="Directory containing log files")
+    parser.add_argument("--parse-error-report", type=str, default=None, help="Write parse error report JSON to PATH")
     parser.add_argument("--output", "-o", default="log_report.json", help="Output file path")
     parser.add_argument("--format", choices=["json", "csv", "html"], default="json", help="Output format")
     parser.add_argument("--search", help="Search for a string in logs")
@@ -461,6 +473,11 @@ def main():
 
     return 0
 
+
+if args.parse_error_report and parse_errors:
+        with open(args.parse_error_report, "w") as f:
+            json.dump({"parse_errors": parse_errors}, f, indent=2)
+            print(f"Parse error report written to {args.parse_error_report}")
 
 if __name__ == "__main__":
     main()

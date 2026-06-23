@@ -64,12 +64,41 @@ DISK_THRESHOLD_CRITICAL = 90
 MEMORY_THRESHOLD_WARNING = 80
 MEMORY_THRESHOLD_CRITICAL = 90
 
+DEFAULT_PROBE_RATE = 10
+
+class TokenBucket:
+    'Token bucket rate limiter.'
+    def __init__(self, rate=10):
+        self.rate = rate
+        self.tokens = float(rate)
+        self.last_refill = time.time()
+        self.throttled = 0
+
+    def acquire(self, scale=1.0):
+        er = self.rate * scale
+        now = time.time()
+        elapsed = now - self.last_refill
+        self.tokens = min(float(er), self.tokens + elapsed * er)
+        self.last_refill = now
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+        self.throttled += 1
+        return False
+
+    def get_stats(self):
+        return {'rate': self.rate, 'throttled': self.throttled}
+
 # ---------------------------------------------------------------------------
 # CHECK FUNCTIONS
 # ---------------------------------------------------------------------------
 
-def check_http_service(host: str, port: int, path: str, timeout: int) -> Tuple[str, str, int]:
+def check_http_service(host: str, port: int, path: str, timeout: int, rate_limiter=None, cb_state=None) -> Tuple[str, str, int]:
     import http.client
+    if rate_limiter:
+        rs = 0.5 if cb_state == 'HALF_OPEN' else 1.0
+        if not rate_limiter.acquire(rs):
+            return 'WARNING', 'Rate limited', 0
     try:
         conn = http.client.HTTPConnection(host, port, timeout=timeout)
         conn.request("GET", path)
@@ -200,7 +229,7 @@ def check_load_average() -> Tuple[str, str, float]:
 # HEALTH CHECK RUNNER
 # ---------------------------------------------------------------------------
 
-def run_health_checks(service: Optional[str] = None, json_output: bool = False) -> Dict[str, Any]:
+def run_health_checks(service: Optional[str] = None, json_output: bool = False, probe_rate: int = DEFAULT_PROBE_RATE) -> Dict[str, Any]:
     results: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "hostname": socket.gethostname(),
@@ -211,13 +240,15 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
     }
 
     all_ok = True
+    rate_limiter = TokenBucket(rate=probe_rate)
 
     # Check services
     for name, config in SERVICES.items():
         if service and name != service:
             continue
         status, detail, code = check_http_service(
-            config["host"], config["port"], config["path"], config["timeout"]
+            config["host"], config["port"], config["path"], config["timeout"],
+            rate_limiter=rate_limiter,
         )
         results["services"][name] = {
             "status": status,
@@ -270,6 +301,7 @@ def run_health_checks(service: Optional[str] = None, json_output: bool = False) 
                 all_ok = False
 
     results["overall_status"] = "OK" if all_ok else "DEGRADED"
+    results["rate_limiter"] = rate_limiter.get_stats()
 
     return results
 
@@ -307,6 +339,8 @@ def parse_args():
     parser.add_argument("--watch", "-w", action="store_true", help="Continuous monitoring")
     parser.add_argument("--interval", "-i", type=int, default=30, help="Check interval in seconds")
     parser.add_argument("--output", "-o", help="Output file path")
+    parser.add_argument("--probe-rate", type=int, default=DEFAULT_PROBE_RATE,
+                        help=f"Max probes per second (default: {DEFAULT_PROBE_RATE})")
     return parser.parse_args()
 
 
@@ -317,7 +351,7 @@ def main():
         print(f"Continuous monitoring (interval: {args.interval}s). Press Ctrl+C to stop.")
         try:
             while True:
-                results = run_health_checks(args.service, args.json)
+                results = run_health_checks(args.service, args.json, probe_rate=args.probe_rate)
                 if args.json:
                     print(json.dumps(results, indent=2))
                 else:
@@ -326,7 +360,7 @@ def main():
         except KeyboardInterrupt:
             print("\nMonitoring stopped")
     else:
-        results = run_health_checks(args.service, args.json)
+        results = run_health_checks(args.service, args.json, probe_rate=args.probe_rate)
         if args.json:
             output = json.dumps(results, indent=2)
             print(output)
